@@ -1,3 +1,10 @@
+## License
+
+GNU Affero General Public License v3.0 (AGPL-3.0)
+
+
+
+
 # Quetra Engine
 
 A lightweight 2D game engine and visual editor written in JavaScript.
@@ -44,6 +51,8 @@ not intended for production use.
 ## License
 
 GNU Affero General Public License v3.0 (AGPL-3.0)
+
+
 
 
 
