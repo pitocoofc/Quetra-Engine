@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Quetra - Editor & Runtime Pro (.QTB Lambda Supported)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: monospace; }
+    body { display: flex; height: 100vh; background: #1e1e1e; color: #fff; overflow: hidden; }
+    
+ 
+    #sidebar { width: 240px; background: #252526; padding: 10px; border-right: 1px solid #333; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+    #viewport-container { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #111; position: relative; }
+    #inspector { width: 320px; background: #252526; padding: 10px; border-left: 1px solid #333; overflow-y: auto; }
+    
+  
+    #canvas-wrapper { position: relative; width: 640px; height: 480px; overflow: hidden; }
+    canvas { border: 1px solid #444; background: #000; cursor: crosshair; display: block; }
+    #global-ui-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+    #global-ui-overlay * { pointer-events: auto; }
+
+   
+    #toolbar { margin-bottom: 10px; display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+    button, select.btn-select { background: #0e639c; color: white; border: none; padding: 8px 12px; cursor: pointer; border-radius: 3px; font-weight: bold; font-size: 12px; }
+    button:hover, select.btn-select:hover { background: #1177bb; }
+    button.danger { background: #e51400; }
+    button.danger:hover { background: #ff2a16; }
+    .badge { font-size: 10px; padding: 3px 6px; background: #333; border-radius: 3px; border: 1px solid #555; }
+
+ 
+    .prop-group { margin-bottom: 10px; }
+    .prop-group label { display: block; font-size: 11px; margin-bottom: 4px; color: #aaa; text-transform: uppercase; }
+    .prop-group input[type="text"], 
+    .prop-group input[type="number"], 
+    .prop-group select, 
+    .prop-group textarea { 
+      width: 100%; padding: 6px; background: #1e1e1e; border: 1px solid #454545; color: #9cdcfe; font-family: 'Consolas', monospace; font-size: 12px;
+    }
+    .prop-group textarea { height: 110px; resize: vertical; line-height: 1.4; color: #ce9178; }
+    .row { display: flex; gap: 5px; }
+    .row .prop-group { flex: 1; }
+    .checkbox-group { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+
+   
+    #log-panel {
+      position: absolute; bottom: 0; left: 0; right: 0; height: 140px;
+      background: rgba(30, 30, 30, 0.95); border-top: 2px solid #007acc;
+      padding: 8px; font-size: 11px; overflow-y: auto; display: none; z-index: 100;
+    }
+    #log-panel .log-entry { margin-bottom: 4px; border-bottom: 1px solid #2a2a2a; padding-bottom: 2px; }
+    #log-panel .log-info { color: #4ec9b0; }
+    #log-panel .log-warn { color: #ce9178; }
+    #log-panel .log-error { color: #f44747; }
+  </style>
+</head>
+<body>
+
+
+  <input type="file" id="file-input" accept=".json,.html,.nojson,.bin,.qtb" style="display: none;" onchange="engine.importProject(event)">
+
+
+  <div id="sidebar">
+    <h3>Cena</h3>
+    <button onclick="engine.createObject()">+ Novo Objeto</button>
+    <div id="object-list" style="flex: 1; overflow-y: auto;"></div>
+
+    <hr style="border-color: #333;">
+    <h3>Script Global (HTML/JS)</h3>
+    <div class="prop-group">
+      <label>HTML UI Overlay</label>
+      <textarea id="global-html" placeholder="<div id='hud'>Score: 0</div>" oninput="engine.globalHTML=this.value; engine.saveState();"></textarea>
+    </div>
+    <div class="prop-group">
+      <label>JavaScript Global</label>
+      <textarea id="global-js" placeholder="// Executado no inicio do Play" oninput="engine.globalJS=this.value; engine.saveState();"></textarea>
+    </div>
+  </div>
+
+
+  <div id="viewport-container">
+    <div id="toolbar">
+      <button id="btn-mode" onclick="engine.toggleMode()">▶ Play Game</button>
+      
+      <select id="export-format" class="btn-select" style="background: #23d160;">
+        <option value="json">💾 Exportar .JSON</option>
+        <option value="html">🌐 Exportar .HTML</option>
+        <option value="nojson">📄 Exportar .NOJSON</option>
+        <option value="bin">⚙️ Exportar .BIN</option>
+        <option value="qtb">⚡ Exportar .QTB (Quettabyte / Lambda)</option>
+      </select>
+      <button onclick="engine.exportProject()" style="background: #23d160;">Baixar</button>
+
+      <button onclick="document.getElementById('file-input').click()" style="background: #e6a23c;">📂 Carregar Arquivo</button>
+      <span id="select-mode-badge" class="badge" style="display:none; color: #4ec9b0; border-color: #4ec9b0;">[Ctrl+Q] Seleção em Área</span>
+      <span id="resize-mode-badge" class="badge" style="display:none; color: #e6a23c; border-color: #e6a23c;">[Ctrl+K] Modo Redimensionamento</span>
+    </div>
+    
+    <div id="canvas-wrapper">
+      <canvas id="viewport" width="640" height="480"></canvas>
+      <div id="global-ui-overlay"></div>
+    </div>
+
+    
+    <div id="log-panel">
+      <div style="color: #888; margin-bottom: 5px;">--- CONSOLE DE LOGS (Pressione TAB para fechar) ---</div>
+      <div id="log-content"></div>
+    </div>
+  </div>
+
+ 
+  <div id="inspector">
+    <h3>Propriedades</h3>
+    <div id="inspector-fields" style="margin-top: 15px;">
+      <p style="color: #666;">Nenhum objeto selecionado.</p>
+    </div>
+  </div>
+
+<script>
+
+const Input = {
+  keys: {},
+  init() {
+    window.addEventListener('keydown', (e) => {
+      const isEditingText = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
+
+      if (e.key === ' ' || e.key === 'Tab') {
+        if (!isEditingText) e.preventDefault();
+      }
+      if (e.key === 'Tab') {
+        engine.toggleLogPanel();
+        return;
+      }
+
+     
+      if (e.ctrlKey && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        engine.toggleResizeMode();
+        return;
+      }
+
+      
+      if (e.ctrlKey && (e.key === 'q' || e.key === 'Q' || e.key === 'x' || e.key === 'X')) {
+        if (Input.isDown('Control') && (Input.isDown('q') || Input.isDown('Q')) && (e.key === 'x' || e.key === 'X')) {
+          e.preventDefault();
+          engine.clearAllGame();
+          return;
+        }
+      }
+
+     
+      if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
+        if (!isEditingText) {
+          e.preventDefault();
+          engine.undo();
+          return;
+        }
+      }
+
+  
+      if (e.ctrlKey && (e.key === 'l' || e.key === 'L')) {
+        e.preventDefault();
+        document.getElementById('file-input').click();
+        return;
+      }
+
+     
+      if ((e.key === 'Delete' || e.key === 'Backspace' || (e.ctrlKey && (e.key === 'x' || e.key === 'X'))) && !isEditingText) {
+        e.preventDefault();
+        engine.deleteSelectedObjects();
+        return;
+      }
+
+      
+      if (e.ctrlKey && (e.key === 'q' || e.key === 'Q')) {
+        e.preventDefault();
+        engine.toggleBoxSelectMode();
+        return;
+      }
+
+      this.keys[e.key] = true;
+      this.keys[e.key.toLowerCase()] = true;
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (e.key === ' ' || e.key === 'Tab') e.preventDefault();
+      this.keys[e.key] = false;
+      this.keys[e.key.toLowerCase()] = false;
+    });
+  },
+  isDown(key) {
+    return !!this.keys[key];
+  }
+};
+
+class MiniEngine {
+  constructor() {
+    this.canvas = document.getElementById('viewport');
+    this.ctx = this.canvas.getContext('2d');
+    this.uiOverlay = document.getElementById('global-ui-overlay');
+    this.logPanel = document.getElementById('log-panel');
+    this.logContent = document.getElementById('log-content');
+
+    this.scene = [];
+    this.selectedObjs = [];
+    this.isPlayMode = false;
+    this.isDragging = false;
+    this.lastTime = 0;
+    this.textureCache = {};
+
+   
+    this.history = [];
+    this.maxHistory = 30;
+
+    
+    this.zoom = 1;
+    this.pan = { x: 0, y: 0 };
+
+    
+    this.resizeMode = false;
+    this.dragStartMouse = { x: 0, y: 0 };
+    this.dragStartDimensions = [];
+
+    
+    this.boxSelectMode = false;
+    this.isBoxSelecting = false;
+    this.boxStart = { x: 0, y: 0 };
+    this.boxEnd = { x: 0, y: 0 };
+
+    this.globalHTML = "";
+    this.globalJS = "// Exemplo:\n// window.score = 0;\n// console.log('Jogo iniciado!');";
+
+    Input.init();
+    this.setupLogger();
+    this.setupEvents();
+    this.saveState();
+    this.startLoop();
+  }
+
+ 
+  toggleResizeMode() {
+    this.resizeMode = !this.resizeMode;
+    const badge = document.getElementById('resize-mode-badge');
+    badge.style.display = this.resizeMode ? 'inline-block' : 'none';
+    console.log(this.resizeMode ? "Modo Redimensionamento ATIVADO (Ctrl+K)" : "Modo Movimentação ATIVADO (Ctrl+K)");
+  }
+
+  
+  saveState() {
+    if (this.isPlayMode) return;
+    const state = JSON.stringify({
+      scene: this.scene,
+      globalHTML: this.globalHTML,
+      globalJS: this.globalJS
+    });
+
+    if (this.history.length === 0 || this.history[this.history.length - 1] !== state) {
+      this.history.push(state);
+      if (this.history.length > this.maxHistory) this.history.shift();
+    }
+  }
+
+  undo() {
+    if (this.history.length > 1) {
+      this.history.pop();
+      const prevState = JSON.parse(this.history[this.history.length - 1]);
+      this.scene = prevState.scene;
+      this.globalHTML = prevState.globalHTML;
+      this.globalJS = prevState.globalJS;
+      this.selectedObjs = [];
+      this.updateUI();
+      this.updateInspector();
+      console.log("Desfeito para a alteração anterior (Undo).");
+    } else {
+      console.warn("Nenhuma alteração anterior para desfazer.");
+    }
+  }
+
+ 
+  clearAllGame() {
+    if (confirm("ATENÇÃO: Deseja realmente apagar todo o jogo e reiniciar a cena do zero?")) {
+      this.scene = [];
+      this.selectedObjs = [];
+      this.globalHTML = "";
+      this.globalJS = "";
+      this.saveState();
+      this.updateUI();
+      this.updateInspector();
+      console.warn("Todo o projeto foi resetado pelo usuário.");
+    }
+  }
+
+ 
+  toggleBoxSelectMode() {
+    this.boxSelectMode = !this.boxSelectMode;
+    const badge = document.getElementById('select-mode-badge');
+    badge.style.display = this.boxSelectMode ? 'inline-block' : 'none';
+    console.log(this.boxSelectMode ? "Modo de Seleção por Caixa ATIVADO" : "Modo de Seleção por Caixa DESATIVADO");
+  }
+
+  deleteSelectedObjects() {
+    if (this.selectedObjs.length === 0) return;
+    this.scene = this.scene.filter(o => !this.selectedObjs.includes(o));
+    console.log(`Removido(s) ${this.selectedObjs.length} objeto(s).`);
+    this.selectedObjs = [];
+    this.saveState();
+    this.updateUI();
+    this.updateInspector();
+  }
+
+  setupLogger() {
+    const origLog = console.log;
+    const origWarn = console.warn;
+    const origError = console.error;
+
+    const appendLog = (msg, type) => {
+      const el = document.createElement('div');
+      el.className = `log-entry log-${type}`;
+      el.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      this.logContent.appendChild(el);
+      this.logPanel.scrollTop = this.logPanel.scrollHeight;
+    };
+
+    console.log = (...args) => { origLog(...args); appendLog(args.join(' '), 'info'); };
+    console.warn = (...args) => { origWarn(...args); appendLog(args.join(' '), 'warn'); };
+    console.error = (...args) => { origError(...args); appendLog(args.join(' '), 'error'); };
+  }
+
+  toggleLogPanel() {
+    this.logPanel.style.display = (this.logPanel.style.display === 'block') ? 'none' : 'block';
+  }
+
+  getTexture(url) {
+    if (!url) return null;
+    if (!this.textureCache[url]) {
+      const img = new Image();
+      img.src = url;
+      this.textureCache[url] = img;
+    }
+    return this.textureCache[url];
+  }
+
+  createObject() {
+    const obj = {
+      id: 'Obj_' + Date.now().toString().slice(-4),
+      type: 'rect',
+      x: 100, y: 100,
+      width: 50, height: 50,
+      color: '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0'),
+      textureUrl: '',
+      solid: false,
+      script: "// Script do objeto:\nif (Input.isDown('ArrowRight')) this.x += 100 * deltaTime;\nif (Input.isDown('ArrowLeft')) this.x -= 100 * deltaTime;",
+      compiledScript: null
+    };
+    this.scene.push(obj);
+    this.selectObjects([obj]);
+    this.saveState();
+    this.updateUI();
+  }
+
+  selectObjects(objs) {
+    this.selectedObjs = objs;
+    this.updateInspector();
+    this.updateUI();
+  }
+
+
+  setupEvents() {
+    this.canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const rect = this.canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+      const newZoom = Math.min(Math.max(0.2, this.zoom * zoomFactor), 5);
+
+      this.pan.x = mouseX - (mouseX - this.pan.x) * (newZoom / this.zoom);
+      this.pan.y = mouseY - (mouseY - this.pan.y) * (newZoom / this.zoom);
+      this.zoom = newZoom;
+    }, { passive: false });
+
+    this.canvas.addEventListener('mousedown', (e) => {
+      if (this.isPlayMode) return;
+      const rect = this.canvas.getBoundingClientRect();
+      const mx = (e.clientX - rect.left - this.pan.x) / this.zoom;
+      const my = (e.clientY - rect.top - this.pan.y) / this.zoom;
+
+      if (this.boxSelectMode) {
+        this.isBoxSelecting = true;
+        this.boxStart = { x: mx, y: my };
+        this.boxEnd = { x: mx, y: my };
+      } else {
+        const clicked = [...this.scene].reverse().find(o => 
+          mx >= o.x && mx <= o.x + o.width && my >= o.y && my <= o.y + o.height
+        );
+
+        if (clicked) {
+          if (!this.selectedObjs.includes(clicked)) {
+            this.selectObjects([clicked]);
+          }
+          this.isDragging = true;
+          this.dragStartMouse = { x: mx, y: my };
+          this.dragStartDimensions = this.selectedObjs.map(o => ({ x: o.x, y: o.y, w: o.width, h: o.height }));
+        } else {
+          this.selectObjects([]);
+        }
+      }
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      const rect = this.canvas.getBoundingClientRect();
+      const mx = (e.clientX - rect.left - this.pan.x) / this.zoom;
+      const my = (e.clientY - rect.top - this.pan.y) / this.zoom;
+
+      if (this.isBoxSelecting) {
+        this.boxEnd = { x: mx, y: my };
+      } else if (this.isDragging && this.selectedObjs.length > 0 && !this.isPlayMode) {
+        const dx = mx - this.dragStartMouse.x;
+        const dy = my - this.dragStartMouse.y;
+
+        this.selectedObjs.forEach((o, idx) => {
+          const init = this.dragStartDimensions[idx];
+          if (this.resizeMode) {
+            o.width = Math.max(10, Math.round(init.w + dx));
+            o.height = Math.max(10, Math.round(init.h + dy));
+          } else {
+            o.x = Math.round(init.x + dx);
+            o.y = Math.round(init.y + dy);
+          }
+        });
+        this.updateInspector();
+      }
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (this.isBoxSelecting) {
+        this.isBoxSelecting = false;
+        const x1 = Math.min(this.boxStart.x, this.boxEnd.x);
+        const x2 = Math.max(this.boxStart.x, this.boxEnd.x);
+        const y1 = Math.min(this.boxStart.y, this.boxEnd.y);
+        const y2 = Math.max(this.boxStart.y, this.boxEnd.y);
+
+        const selected = this.scene.filter(o => 
+          o.x + o.width >= x1 && o.x <= x2 &&
+          o.y + o.height >= y1 && o.y <= y2
+        );
+        this.selectObjects(selected);
+      }
+      if (this.isDragging) {
+        this.isDragging = false;
+        this.saveState();
+      }
+    });
+  }
+
+  checkAABBCollision(rect1, rect2) {
+    return (
+      rect1.x < rect2.x + rect2.width &&
+      rect1.x + rect1.width > rect2.x &&
+      rect1.y < rect2.y + rect2.height &&
+      rect1.y + rect1.height > rect2.y
+    );
+  }
+
+  resolveCollisions(obj) {
+    if (!obj.solid) return;
+    for (const other of this.scene) {
+      if (other === obj || !other.solid) continue;
+      if (this.checkAABBCollision(obj, other)) {
+        const overlapX = (obj.x + obj.width / 2 < other.x + other.width / 2)
+          ? (obj.x + obj.width) - other.x
+          : obj.x - (other.x + other.width);
+
+        const overlapY = (obj.y + obj.height / 2 < other.y + other.height / 2)
+          ? (obj.y + obj.height) - other.y
+          : obj.y - (other.y + other.height);
+
+        if (Math.abs(overlapX) < Math.abs(overlapY)) {
+          obj.x -= overlapX;
+        } else {
+          obj.y -= overlapY;
+        }
+      }
+    }
+  }
+
+  toggleMode() {
+    this.isPlayMode = !this.isPlayMode;
+    const btn = document.getElementById('btn-mode');
+
+    if (this.isPlayMode) {
+      btn.innerText = '⏹ Stop (Edit)';
+      btn.className = 'danger';
+      this.initialSceneState = JSON.stringify(this.scene);
+      this.uiOverlay.innerHTML = this.globalHTML;
+
+      try {
+        const runGlobal = new Function('engine', 'Input', this.globalJS);
+        runGlobal(this, Input);
+      } catch (err) {
+        console.error("Erro no Script Global:", err);
+      }
+
+      this.scene.forEach(obj => {
+        try {
+          obj.compiledScript = new Function('deltaTime', 'Input', 'engine', obj.script);
+        } catch (err) {
+          console.error(`Erro ao compilar script de ${obj.id}:`, err);
+          obj.compiledScript = null;
+        }
+      });
+
+    } else {
+      btn.innerText = '▶ Play Game';
+      btn.className = '';
+      this.uiOverlay.innerHTML = '';
+      this.scene = JSON.parse(this.initialSceneState);
+      this.selectedObjs = [];
+      this.updateUI();
+      this.updateInspector();
+    }
+  }
+
+  
+  toChurchNumeral(n) {
+    n = Math.max(0, Math.floor(n));
+    let body = "x";
+    for (let i = 0; i < n; i++) {
+      body = `f(${body})`;
+    }
+    return `(λf.λx.${body})`;
+  }
+
+ 
+  evalChurchNumeral(lambdaStr) {
+    try {
+      const jsFuncStr = lambdaStr.replace(/λ/g, 'f => ').replace(/\.(λf\.)?λx\./g, ' => x => ');
+      const fn = new Function(`return ${jsFuncStr}`)();
+      return fn(x => x + 1)(0);
+    } catch(e) {
+      return 0;
+    }
+  }
+
+  
+  stringToLambdaArray(str) {
+    const lambdas = [];
+    for (let i = 0; i < str.length; i++) {
+      lambdas.push(this.toChurchNumeral(str.charCodeAt(i)));
+    }
+    return `[${lambdas.join(',')}]`;
+  }
+
+  
+  lambdaArrayToString(arr) {
+    return arr.map(lStr => String.fromCharCode(this.evalChurchNumeral(lStr))).join('');
+  }
+
+
+  getProjectData() {
+    return {
+      globalHTML: this.globalHTML,
+      globalJS: this.globalJS,
+      scene: this.scene.map(({ compiledScript, ...rest }) => rest)
+    };
+  }
+
+  exportProject() {
+    const format = document.getElementById('export-format').value;
+    const data = this.getProjectData();
+    const jsonStr = JSON.stringify(data, null, 2);
+    let blob, filename;
+
+    if (format === 'json') {
+      blob = new Blob([jsonStr], { type: "application/json" });
+      filename = `game_project_${Date.now()}.json`;
+    } else if (format === 'html') {
+      const htmlContent = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Game Runtime</title><style>body{margin:0;background:#000;display:flex;justify-content:center;align-items:center;height:100vh;overflow:hidden;}#canvas-wrapper{position:relative;}#ui{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;}#ui *{pointer-events:auto;}</style></head><body><div id="canvas-wrapper"><canvas id="viewport" width="640" height="480"></canvas><div id="ui"></div></div><script>const data=${JSON.stringify(data)};const Input={keys:{},init(){window.addEventListener('keydown',e=>this.keys[e.key]=this.keys[e.key.toLowerCase()]=true);window.addEventListener('keyup',e=>this.keys[e.key]=this.keys[e.key.toLowerCase()]=false);},isDown(k){return!!this.keys[k];}};Input.init();const canvas=document.getElementById('viewport'),ctx=canvas.getContext('2d');document.getElementById('ui').innerHTML=data.globalHTML;try{new Function('Input',data.globalJS)(Input);}catch(e){}data.scene.forEach(o=>{try{o.fn=new Function('deltaTime','Input',o.script);}catch(e){}});let last=0;function loop(t){const dt=(t-last)/1000||0;last=t;ctx.clearRect(0,0,640,480);data.scene.forEach(o=>{if(o.fn)try{o.fn.call(o,dt,Input);}catch(e){}ctx.fillStyle=o.color;if(o.type==='rect')ctx.fillRect(o.x,o.y,o.width,o.height);else if(o.type==='circle'){ctx.beginPath();ctx.arc(o.x+o.width/2,o.y+o.height/2,o.width/2,0,Math.PI*2);ctx.fill();}});requestAnimationFrame(loop);}requestAnimationFrame(loop);<\/script></body></html>`;
+      blob = new Blob([htmlContent], { type: "text/html" });
+      filename = `game_build_${Date.now()}.html`;
+    } else if (format === 'nojson') {
+      let nojsonText = `[GLOBAL_HTML]\n${data.globalHTML}\n[GLOBAL_JS]\n${data.globalJS}\n[OBJECTS]\n`;
+      data.scene.forEach(o => {
+        nojsonText += `OBJECT:${o.id}|${o.type}|${o.x}|${o.y}|${o.width}|${o.height}|${o.color}|${o.solid}|${encodeURIComponent(o.textureUrl)}|${encodeURIComponent(o.script)}\n`;
+      });
+      blob = new Blob([nojsonText], { type: "text/plain" });
+      filename = `game_project_${Date.now()}.nojson`;
+    } else if (format === 'bin') {
+      const encoder = new TextEncoder();
+      const byteArray = encoder.encode(jsonStr);
+      blob = new Blob([byteArray], { type: "application/octet-stream" });
+      filename = `game_project_${Date.now()}.bin`;
+    } else if (format === 'qtb') {
+      
+      let qtbText = `=== QUETTABYTE LAMBDA ENGINE DUMP (UNOPTIMIZED) ===\n`;
+      qtbText += `@GLOBAL_HTML_LAMBDA=${this.stringToLambdaArray(data.globalHTML)}\n`;
+      qtbText += `@GLOBAL_JS_LAMBDA=${this.stringToLambdaArray(data.globalJS)}\n`;
+      qtbText += `@OBJECT_COUNT=${this.toChurchNumeral(data.scene.length)}\n`;
+
+      data.scene.forEach((o, index) => {
+        qtbText += `[OBJECT_${index}]\n`;
+        qtbText += `ID=${this.stringToLambdaArray(o.id)}\n`;
+        qtbText += `TYPE=${this.stringToLambdaArray(o.type)}\n`;
+        qtbText += `X=${this.toChurchNumeral(o.x)}\n`;
+        qtbText += `Y=${this.toChurchNumeral(o.y)}\n`;
+        qtbText += `W=${this.toChurchNumeral(o.width)}\n`;
+        qtbText += `H=${this.toChurchNumeral(o.height)}\n`;
+        qtbText += `COLOR=${this.stringToLambdaArray(o.color)}\n`;
+        qtbText += `SOLID=${o.solid ? "(λx.λy.x)" : "(λx.λy.y)"}\n`; 
+        qtbText += `TEX=${this.stringToLambdaArray(o.textureUrl || '')}\n`;
+        qtbText += `SCRIPT=${this.stringToLambdaArray(o.script || '')}\n`;
+      });
+
+      blob = new Blob([qtbText], { type: "text/plain" });
+      filename = `game_project_${Date.now()}.qtb`;
+    }
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    console.log(`Projeto exportado como .${format.toUpperCase()}`);
+  }
+
+  
+  importProject(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const ext = file.name.split('.').pop().toLowerCase();
+    const reader = new FileReader();
+
+    if (ext === 'bin') {
+      reader.onload = (e) => {
+        try {
+          const decoder = new TextDecoder();
+          const decodedStr = decoder.decode(e.target.result);
+          const data = JSON.parse(decodedStr);
+          this.loadProjectData(data);
+          console.log("Projeto .BIN carregado com sucesso!");
+        } catch (err) {
+          console.error("Erro ao importar arquivo .BIN:", err);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.onload = (e) => {
+        const text = e.target.result;
+        try {
+          if (ext === 'json') {
+            this.loadProjectData(JSON.parse(text));
+          } else if (ext === 'html') {
+            const match = text.match(/const data=(\{.*?\});const Input/);
+            if (match) {
+              this.loadProjectData(JSON.parse(match[1]));
+            } else {
+              throw new Error("Formato HTML inválido ou não gerado por esta engine.");
+            }
+          } else if (ext === 'nojson') {
+            const htmlPart = text.split('[GLOBAL_HTML]\n')[1]?.split('\n[GLOBAL_JS]')[0] || '';
+            const jsPart = text.split('[GLOBAL_JS]\n')[1]?.split('\n[OBJECTS]')[0] || '';
+            const objsPart = text.split('[OBJECTS]\n')[1] || '';
+
+            const scene = [];
+            objsPart.split('\n').forEach(line => {
+              if (line.startsWith('OBJECT:')) {
+                const p = line.replace('OBJECT:', '').split('|');
+                scene.push({
+                  id: p[0], type: p[1], x: Number(p[2]), y: Number(p[3]),
+                  width: Number(p[4]), height: Number(p[5]), color: p[6],
+                  solid: p[7] === 'true', textureUrl: decodeURIComponent(p[8] || ''),
+                  script: decodeURIComponent(p[9] || '')
+                });
+              }
+            });
+
+            this.loadProjectData({ globalHTML: htmlPart, globalJS: jsPart, scene });
+          } else if (ext === 'qtb') {
+            
+            const lines = text.split('\n');
+            let globalHTML = "";
+            let globalJS = "";
+            const scene = [];
+            let currentObj = null;
+
+            lines.forEach(line => {
+              line = line.trim();
+              if (line.startsWith('@GLOBAL_HTML_LAMBDA=')) {
+                const arrStr = line.replace('@GLOBAL_HTML_LAMBDA=', '');
+                const lambdas = arrStr.slice(1, -1).split(/\),(?=\()/);
+                globalHTML = this.lambdaArrayToString(lambdas);
+              } else if (line.startsWith('@GLOBAL_JS_LAMBDA=')) {
+                const arrStr = line.replace('@GLOBAL_JS_LAMBDA=', '');
+                const lambdas = arrStr.slice(1, -1).split(/\),(?=\()/);
+                globalJS = this.lambdaArrayToString(lambdas);
+              } else if (line.startsWith('[OBJECT_')) {
+                if (currentObj) scene.push(currentObj);
+                currentObj = {};
+              } else if (currentObj && line.includes('=')) {
+                const [key, val] = line.split(/=(.*)/);
+                if (key === 'ID') currentObj.id = this.lambdaArrayToString(val.slice(1, -1).split(/\),(?=\()/));
+                if (key === 'TYPE') currentObj.type = this.lambdaArrayToString(val.slice(1, -1).split(/\),(?=\()/));
+                if (key === 'X') currentObj.x = this.evalChurchNumeral(val);
+                if (key === 'Y') currentObj.y = this.evalChurchNumeral(val);
+                if (key === 'W') currentObj.width = this.evalChurchNumeral(val);
+                if (key === 'H') currentObj.height = this.evalChurchNumeral(val);
+                if (key === 'COLOR') currentObj.color = this.lambdaArrayToString(val.slice(1, -1).split(/\),(?=\()/));
+                if (key === 'SOLID') currentObj.solid = val.includes("λx.λy.x");
+                if (key === 'TEX') currentObj.textureUrl = this.lambdaArrayToString(val.slice(1, -1).split(/\),(?=\()/));
+                if (key === 'SCRIPT') currentObj.script = this.lambdaArrayToString(val.slice(1, -1).split(/\),(?=\()/));
+              }
+            });
+            if (currentObj && currentObj.id) scene.push(currentObj);
+
+            this.loadProjectData({ globalHTML, globalJS, scene });
+          }
+          console.log(`Projeto .${ext.toUpperCase()} carregado com sucesso!`);
+        } catch (err) {
+          console.error(`Erro ao importar arquivo .${ext.toUpperCase()}:`, err);
+        }
+      };
+      reader.readAsText(file);
+    }
+    event.target.value = '';
+  }
+
+  loadProjectData(data) {
+    this.globalHTML = data.globalHTML || "";
+    this.globalJS = data.globalJS || "";
+    this.scene = data.scene || [];
+    this.selectedObjs = [];
+    this.saveState();
+    this.updateUI();
+    this.updateInspector();
+  }
+
+  updateUI() {
+    const list = document.getElementById('object-list');
+    list.innerHTML = '';
+    this.scene.forEach(obj => {
+      const item = document.createElement('div');
+      item.innerText = `${obj.id} (${obj.type})`;
+      item.style.padding = '8px';
+      item.style.cursor = 'pointer';
+      item.style.background = this.selectedObjs.includes(obj) ? '#37373d' : 'transparent';
+      item.onclick = (e) => {
+        if (e.ctrlKey) {
+          this.selectObjects([...this.selectedObjs, obj]);
+        } else {
+          this.selectObjects([obj]);
+        }
+      };
+      list.appendChild(item);
+    });
+
+    document.getElementById('global-html').value = this.globalHTML;
+    document.getElementById('global-js').value = this.globalJS;
+  }
+
+  updateSelectedProp(prop, val) {
+    this.selectedObjs.forEach(o => o[prop] = val);
+    this.saveState();
+    this.updateUI();
+  }
+
+  updateInspector() {
+    const fields = document.getElementById('inspector-fields');
+    if (this.selectedObjs.length === 0) {
+      fields.innerHTML = '<p style="color: #666;">Nenhum objeto selecionado.</p>';
+      return;
+    }
+
+    const first = this.selectedObjs[0];
+    const isMulti = this.selectedObjs.length > 1;
+
+    fields.innerHTML = `
+      ${isMulti ? `<p style="color: #4ec9b0; font-weight: bold; margin-bottom: 10px;">Modificando ${this.selectedObjs.length} objetos simultaneamente</p>` : ''}
+      
+      <div class="prop-group">
+        <label>Nome ${isMulti ? '(Apenas o primeiro)' : ''}</label>
+        <input type="text" value="${first.id}" oninput="engine.selectedObjs[0].id=this.value; engine.updateUI(); engine.saveState();">
+      </div>
+
+      <div class="prop-group">
+        <label>Forma Geométrica</label>
+        <select onchange="engine.updateSelectedProp('type', this.value)">
+          <option value="rect" ${first.type === 'rect' ? 'selected' : ''}>Retângulo</option>
+          <option value="circle" ${first.type === 'circle' ? 'selected' : ''}>Círculo</option>
+          <option value="triangle" ${first.type === 'triangle' ? 'selected' : ''}>Triângulo</option>
+        </select>
+      </div>
+
+      <div class="checkbox-group">
+        <input type="checkbox" id="chk-solid" ${first.solid ? 'checked' : ''} onchange="engine.updateSelectedProp('solid', this.checked)">
+        <label for="chk-solid" style="font-size: 11px; cursor: pointer;">Sólido (Colisão)</label>
+      </div>
+
+      <div class="row">
+        <div class="prop-group">
+          <label>Posição X</label>
+          <input type="number" value="${first.x}" oninput="engine.updateSelectedProp('x', Number(this.value))">
+        </div>
+        <div class="prop-group">
+          <label>Posição Y</label>
+          <input type="number" value="${first.y}" oninput="engine.updateSelectedProp('y', Number(this.value))">
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="prop-group">
+          <label>Largura (W)</label>
+          <input type="number" value="${first.width}" oninput="engine.updateSelectedProp('width', Number(this.value))">
+        </div>
+        <div class="prop-group">
+          <label>Altura (H)</label>
+          <input type="number" value="${first.height}" oninput="engine.updateSelectedProp('height', Number(this.value))">
+        </div>
+      </div>
+
+      <div class="prop-group">
+        <label>Cor (Se não houver textura)</label>
+        <input type="color" value="${first.color}" oninput="engine.updateSelectedProp('color', this.value)">
+      </div>
+
+      <div class="prop-group">
+        <label>URL da Textura (Imagem)</label>
+        <input type="text" value="${first.textureUrl || ''}" placeholder="https://..." oninput="engine.updateSelectedProp('textureUrl', this.value)">
+      </div>
+
+      <div class="prop-group">
+        <label>Script (JS)</label>
+        <textarea oninput="engine.updateSelectedProp('script', this.value)">${first.script}</textarea>
+      </div>
+    `;
+  }
+
+  drawObject(obj) {
+    const img = this.getTexture(obj.textureUrl);
+
+    if (img && img.complete && img.naturalWidth !== 0) {
+      this.ctx.drawImage(img, obj.x, obj.y, obj.width, obj.height);
+    } else {
+      this.ctx.fillStyle = obj.color;
+      if (obj.type === 'rect') {
+        this.ctx.fillRect(obj.x, obj.y, obj.width, obj.height);
+      } else if (obj.type === 'circle') {
+        this.ctx.beginPath();
+        const radius = Math.min(obj.width, obj.height) / 2;
+        this.ctx.arc(obj.x + radius, obj.y + radius, radius, 0, Math.PI * 2);
+        this.ctx.fill();
+      } else if (obj.type === 'triangle') {
+        this.ctx.beginPath();
+        this.ctx.moveTo(obj.x + obj.width / 2, obj.y);
+        this.ctx.lineTo(obj.x, obj.y + obj.height);
+        this.ctx.lineTo(obj.x + obj.width, obj.y + obj.height);
+        this.ctx.closePath();
+        this.ctx.fill();
+      }
+    }
+  }
+
+ 
+  startLoop() {
+    const loop = (timestamp) => {
+      const deltaTime = (timestamp - this.lastTime) / 1000 || 0;
+      this.lastTime = timestamp;
+
+      if (this.isPlayMode) {
+        this.scene.forEach(obj => {
+          if (obj.compiledScript) {
+            try {
+              obj.compiledScript.call(obj, deltaTime, Input, this);
+            } catch (err) {
+              console.error(`Erro na execução de ${obj.id}:`, err);
+            }
+          }
+          this.resolveCollisions(obj);
+        });
+      }
+
+      
+      this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      this.ctx.save();
+      this.ctx.translate(this.pan.x, this.pan.y);
+      this.ctx.scale(this.zoom, this.zoom);
+
+      this.scene.forEach(obj => {
+        this.drawObject(obj);
+
+        if (!this.isPlayMode && this.selectedObjs.includes(obj)) {
+          this.ctx.strokeStyle = this.resizeMode ? '#e6a23c' : '#ffcc00';
+          this.ctx.lineWidth = 2 / this.zoom;
+          this.ctx.strokeRect(obj.x - 2, obj.y - 2, obj.width + 4, obj.height + 4);
+        }
+      });
+
+     
+      if (this.isBoxSelecting) {
+        const x = Math.min(this.boxStart.x, this.boxEnd.x);
+        const y = Math.min(this.boxStart.y, this.boxEnd.y);
+        const w = Math.abs(this.boxEnd.x - this.boxStart.x);
+        const h = Math.abs(this.boxEnd.y - this.boxStart.y);
+
+        this.ctx.fillStyle = 'rgba(0, 122, 204, 0.2)';
+        this.ctx.strokeStyle = '#007acc';
+        this.ctx.lineWidth = 1 / this.zoom;
+        this.ctx.fillRect(x, y, w, h);
+        this.ctx.strokeRect(x, y, w, h);
+      }
+
+      this.ctx.restore();
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  }
+}
+
+const engine = new MiniEngine();
+</script>
+</body>
+</html>
