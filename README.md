@@ -48,9 +48,6 @@ This format exists for research and experimentation and is
 not intended for production use.
 
 
-## License
-
-GNU Affero General Public License v3.0 (AGPL-3.0)
 
 
 
