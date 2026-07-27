@@ -71,4 +71,4 @@ not intended for production use.
 
 - WTF, Ghost? Did you make yet another engine? What about those 50 graphics engine repositories? Did you forget about them? And the other 118 repositories? When are you going to finish them?
 
-- I'll finish them by 2050 AC IV (After Christ Edition... available in the Premium version).
+- I'll finish them by 2050 AC (After Christ IV)
